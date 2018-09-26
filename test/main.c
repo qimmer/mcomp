@@ -3,17 +3,14 @@
 //
 
 #include "../mcomp.h"
-#include "entity.h"
+#include "named.h"
+#include "owned.h"
 
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
 
-void entity_changed(const entity_t *o, const entity_t *n) {
-
-}
-
-void naming_changed(const named_t *o, const named_t *n) {
+void naming_changed(const naming_t *o, const naming_t *n) {
 
 }
 
@@ -32,26 +29,26 @@ void print_component(component_t *cpt) {
 int main() {
     component_error_proc = printf;
 
-    use_entity();
+    use_naming();
+    use_ownership();
 
-    register_listener(&entity_cpt, (void*)entity_changed);
-    register_listener(&named_cpt, (void*)naming_changed);
+    register_listener(&naming_t_cpt, naming_changed);
 
-    ref_t ref = comp_new(&entity_cpt);
+    entity_t ref = create();
 
-    entity_t entity, entity2;
-    component_get(ref, &entity);
+    naming_t data;
+    get_naming_t(ref, &data);
 
-    strcpy(entity.naming.name, "Hello");
+    strcpy(data.name, "Hello");
 
-    comp_update(ref, &entity);
+    update_naming_t(ref, &data);
 
-    component_get(ref, &entity2);
+    get_naming_t(ref, &data);
 
-    assert(strcmp(entity2.naming.name, "Hello") == 0);
+    assert(strcmp(data.name, "Hello") == 0);
 
 
-    print_component(&component_cpt);
+    print_component(&component_t_cpt);
 
     return 0;
 }

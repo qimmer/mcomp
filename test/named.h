@@ -7,12 +7,10 @@
 
 #include "../mcomp.h"
 
-typedef struct {
+component(naming_t, {
     char name[64];
-} named_t;
+})
 
-extern component_t named_cpt;
-
-void use_named();
+void use_naming();
 
 #endif //PLAZA_NAMED_H

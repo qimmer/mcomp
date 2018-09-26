@@ -7,12 +7,10 @@
 
 #include "../mcomp.h"
 
-typedef struct {
-    ref_t owner;
-} owned_t;
+component(ownership_t, {
+    entity_t owner;
+})
 
-extern component_t owned_cpt;
-
-void use_owned();
+void use_ownership();
 
 #endif //PLAZA_OWNED_H

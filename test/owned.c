@@ -6,15 +6,12 @@
 #include "owned.h"
 #include <stddef.h>
 
-component_t owned_cpt;
+def_comp(ownership_t)
+    def_field(ownership_t, entity, owner)
+def_end
 
-static const field_t owned_fields[] = {
-        { "Owner", t_ref, offsetof(owned_t, owner), member_size(owned_t, owner), false },
-        fields_end
-};
-
-void use_owned() {
+void use_ownership() {
     use_component();
 
-    component_register(&owned_cpt, "Owned", owned_fields, sizeof(owned_t));
+    reg_comp(ownership_t);
 };

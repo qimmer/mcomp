@@ -19,6 +19,12 @@ error_proc component_error_proc = null;
 static const int vec_alignment = 16;
 static const int vec_min_alloc = 16;
 
+static char large_null[4096];
+static entity_t invalid_entity = {
+    0,
+    0
+};
+
 unsigned long upper_pow_two(unsigned long v)
 {
     v--;
@@ -197,20 +203,57 @@ unsigned int vec_count(void **vec_data) {
     return vec->count;
 }
 
-bool ref_valid(ref_t ref) {
-    if(!ref.component || ref.component->magic != magic_number) {
-        return false;
+u32 *entity_free_slots = null;
+u32 *entity_generations = null;
+
+entity_t create() {
+    entity_t result;
+
+    if(vec_pop(&entity_free_slots, &result.index)) {
+        result.gen = entity_generations[result.index];
+    } else {
+        u32 cnt = vec_count(&entity_generations);
+        result.index = cnt;
+
+        vec_resize(&entity_generations, cnt + 1, sizeof(result.gen));
     }
 
-    u32 cnt = vec_count((void**)&ref.component->manager.generations);
+    entity_generations[result.index]++;
+    result.gen = entity_generations[result.index];
 
-    return cnt > ref.index && ref.component->manager.generations[ref.index] == ref.gen;
+    return result;
 }
+
+void destroy(entity_t entity) {
+    if(!is_valid(entity)) return;
+
+    u32 num_components = vec_count(component_t_cpt.manager.instances);
+    component_t* components = (component_t*)component_t_cpt.manager.instances;
+
+    for(u32 i = 0; i < num_components; ++i) {
+        update(&components[i], entity, large_null);
+    }
+
+    entity_generations[entity.index]++;
+    vec_push(&entity_free_slots, &entity.index, sizeof(entity.index));
+}
+
+bool is_valid(entity_t entity) {
+    return entity.gen
+        && entity.index < vec_count(&entity_generations)
+        && entity_generations[entity.index] == entity.gen;
+};
 
 void component_register(component_t *cpt, const char *name, const field_t *fields, u32 size) {
     if(cpt->magic == magic_number) {
         return;
     }
+
+    // Limit a single component to maximally occupy a whole memory page of 4kb
+    assert(size <= 4096);
+
+    // Just need to do this somewhere.
+    memset(large_null, 0, sizeof(large_null));
 
     memset(cpt, 0, sizeof(component_t));
 
@@ -223,18 +266,102 @@ void component_register(component_t *cpt, const char *name, const field_t *field
     vec_push((void**)&components, cpt, sizeof(cpt));
 }
 
-bool component_get(ref_t ref, void *data) {
-    if(!ref_valid(ref)) return false;
+bool get(component_t *cpt, entity_t entity, void *data) {
+    assert(cpt->magic == magic_number);
 
-    memcpy(data, &ref.component->manager.instances[ref.index * ref.component->size], ref.component->size);
+    if(vec_count(&cpt->manager.entity_to_component_index_map) <= entity.index
+    || !is_valid(entity)) {
+        memset(data, 0, cpt->size);
+        return false;
+    }
+
+    u32 comp_idx = cpt->manager.entity_to_component_index_map[entity.index];
+    bool has_component = comp_idx != idx_invalid;
+
+    if(!has_component) {
+        memset(data, 0, cpt->size);
+        return false;
+    }
+
+    memcpy(data, &cpt->manager.instances[comp_idx * cpt->size], cpt->size);
 
     return true;
 }
 
-bool comp_update(ref_t ref, const void *data) {
-    if(!ref_valid(ref)) return false;
+static u32 comp_alloc(component_t *cpt, entity_t entity) {
+    u32 idx = 0;
+    if(!vec_pop(&cpt->manager.free_indices, &idx)) {
+        idx = vec_count(&cpt->manager.instances);
+        vec_resize(&cpt->manager.instances, idx + 1, cpt->size);
+    }
 
-    memcpy(&ref.component->manager.instances[ref.index * ref.component->size], data, ref.component->size);
+    if(vec_count(&cpt->manager.component_to_entity_map) <= idx) {
+        vec_resize(&cpt->manager.component_to_entity_map, idx + 1, sizeof(entity_t));
+    }
+
+    cpt->manager.component_to_entity_map[idx] = entity;
+    cpt->manager.entity_to_component_index_map[entity.index] = idx;
+
+    return idx;
+}
+
+static void comp_free(component_t *cpt, u32 idx) {
+    entity_t entity = cpt->manager.component_to_entity_map[idx];
+
+    cpt->manager.component_to_entity_map[idx] = invalid_entity;
+    cpt->manager.entity_to_component_index_map[entity.index] = idx_invalid;
+
+    vec_push(&cpt->manager.free_indices, &idx, sizeof(u32));
+}
+
+bool update(component_t *cpt, entity_t entity, const void *data) {
+    if(!is_valid(entity)) return false;
+
+    bool is_null = memcmp(data, large_null, cpt->size) == 0;
+
+    u32 cnt = vec_count(&cpt->manager.entity_to_component_index_map);
+    if(cnt <= entity.index) {
+        vec_resize(&cpt->manager.entity_to_component_index_map, entity.index + 1, sizeof(u32));
+        memset(&cpt->manager.entity_to_component_index_map[cnt], 0xFF, sizeof(u32) * (entity.index + 1 - cnt));
+    }
+
+    u32 comp_idx = cpt->manager.entity_to_component_index_map[entity.index];
+    bool has_component = comp_idx != idx_invalid;
+
+    // If this entity has no data and data is null, everything is already as it should be
+    if(is_null && !has_component) {
+        return false;
+    }
+
+    // We should free the component data
+    if(is_null && has_component) {
+        u32 num_listeners = vec_count(&cpt->listeners);
+        for(u32 i = 0; i < num_listeners; ++i) {
+            cpt->listeners[i](
+                &cpt->manager.instances[comp_idx * cpt->size],
+                data
+            );
+        }
+        comp_free(cpt, comp_idx);
+        return false;
+    }
+
+    if(!is_null && !has_component) {
+        comp_idx = comp_alloc(cpt, entity);
+    }
+
+    void *temp = alloca(cpt->size);
+    memcpy(temp, &cpt->manager.instances[comp_idx * cpt->size], cpt->size);
+
+    memcpy(&cpt->manager.instances[comp_idx * cpt->size], data, cpt->size);
+
+    u32 num_listeners = vec_count(&cpt->listeners);
+    for(u32 i = 0; i < num_listeners; ++i) {
+        cpt->listeners[i](
+            temp,
+            data
+        );
+    }
 
     return true;
 }
@@ -245,37 +372,6 @@ void register_listener(component_t *cpt, listener_t func) {
 
 void unregister_listener(component_t *cpt, listener_t func) {
     assert(cpt->magic == magic_number);
-}
-
-ref_t comp_new(component_t *cpt) {
-    assert(cpt->magic == magic_number);
-
-    u32 idx = -1;
-    if(!vec_pop((void**)&cpt->manager.free_indices, &idx)) {
-        idx = vec_count(&cpt->manager.instances);
-        vec_resize(&cpt->manager.instances, idx + 1, cpt->size);
-        vec_resize(&cpt->manager.generations, idx + 1, sizeof(u32));
-    }
-
-    cpt->manager.generations[idx]++; // Odd generations are valid
-
-    ref_t ref;
-    ref.component = cpt;
-    ref.gen = cpt->manager.generations[idx];
-    ref.index = idx;
-
-    return ref;
-}
-
-void comp_free(ref_t ref) {
-    if(!ref_valid(ref)) return;
-
-    vec_push(&ref.component->manager.free_indices, &ref.index, sizeof(u32));
-
-    ref.component->manager.generations[ref.index]++; // Even generations are invalid
-
-    // Zero out component memory
-    memset(&ref.component->manager.instances[ref.index * ref.component->size], 0, ref.component->size);
 }
 
 const component_t *get_components() {
@@ -299,4 +395,5 @@ def_end
 void use_component() {
     reg_comp(field_t);
     reg_comp(component_t);
-};
+}
+
