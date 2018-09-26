@@ -197,8 +197,6 @@ unsigned int vec_count(void **vec_data) {
     return vec->count;
 }
 
-component_t component_cpt, field_cpt;
-
 bool ref_valid(ref_t ref) {
     if(!ref.component || ref.component->magic != magic_number) {
         return false;
@@ -233,7 +231,7 @@ bool component_get(ref_t ref, void *data) {
     return true;
 }
 
-bool component_set(ref_t ref, const void *data) {
+bool comp_update(ref_t ref, const void *data) {
     if(!ref_valid(ref)) return false;
 
     memcpy(&ref.component->manager.instances[ref.index * ref.component->size], data, ref.component->size);
@@ -249,7 +247,7 @@ void unregister_listener(component_t *cpt, listener_t func) {
     assert(cpt->magic == magic_number);
 }
 
-ref_t component_new(component_t *cpt) {
+ref_t comp_new(component_t *cpt) {
     assert(cpt->magic == magic_number);
 
     u32 idx = -1;
@@ -269,38 +267,36 @@ ref_t component_new(component_t *cpt) {
     return ref;
 }
 
-void component_free(ref_t ref) {
+void comp_free(ref_t ref) {
     if(!ref_valid(ref)) return;
 
-    vec_push(ref.component->manager.free_indices, &ref.index, sizeof(u32));
+    vec_push(&ref.component->manager.free_indices, &ref.index, sizeof(u32));
 
     ref.component->manager.generations[ref.index]++; // Even generations are invalid
 
     // Zero out component memory
-    memset(ref.component->manager.instances[ref.index * ref.component->size], 0, ref.component->size);
+    memset(&ref.component->manager.instances[ref.index * ref.component->size], 0, ref.component->size);
 }
 
 const component_t *get_components() {
     return *components;
 }
 
-static const field_t component_fields[] = {
-    { "Name",   t_string,                  offsetof(component_t, name),   member_size(component_t, name),   false },
-    { "Size",   t_u32,                     offsetof(component_t, size),   member_size(component_t, size),   false },
-    { "Fields", component_type(field_cpt), offsetof(component_t, fields), member_size(component_t, fields), true  },
-    fields_end
-};
+def_comp(field_t)
+  def_field(field_t, string, name)
+  def_field(field_t, type, type)
+  def_field(field_t, u16, size)
+  def_field(field_t, u16, offset)
+  def_field(field_t, bool, is_array)
+def_end
 
-static const field_t field_fields[] = {
-    { "Name",    t_string, offsetof(field_t, name),     member_size(field_t, name),     false },
-    { "Type",    t_type,   offsetof(field_t, type),     member_size(field_t, type),     false },
-    { "Offset",  t_u16,    offsetof(field_t, offset),   member_size(field_t, offset),   false },
-    { "Size",    t_u16,    offsetof(field_t, size),     member_size(field_t, size),     false },
-    { "IsArray", t_bool,   offsetof(field_t, is_array), member_size(field_t, is_array), false },
-    fields_end
-};
+def_comp(component_t)
+    def_field(component_t, string, name)
+    def_field(component_t, u32, size)
+    def_children(component_t, field_t, fields)
+def_end
 
 void use_component() {
-    component_register(&field_cpt, "Field", field_fields, sizeof(field_t));
-    component_register(&component_cpt, "Component", component_fields, sizeof(component_t));
+    reg_comp(field_t);
+    reg_comp(component_t);
 };

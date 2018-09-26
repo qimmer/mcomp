@@ -5,6 +5,8 @@
 #ifndef PLAZA_COMPONENT_H
 #define PLAZA_COMPONENT_H
 
+#include <stddef.h>
+
 #define max(x, y) (((x) > (y)) ? (x) : (y))
 #define min(x, y) (((x) < (y)) ? (x) : (y))
 #define abs(x) (((x) > 0) ? x : -x)
@@ -18,6 +20,22 @@ typedef signed short s16;
 typedef signed int s32;
 typedef signed long long s64;
 typedef char bool;
+
+typedef struct {
+    float x, y;
+} v2f;
+
+typedef struct {
+    float x, y, z;
+} v3f;
+
+typedef struct {
+    int x, y;
+} v2i;
+
+typedef struct {
+    int x, y, z;
+} v3i;
 
 #define true 1
 #define false 0
@@ -39,6 +57,10 @@ typedef enum {
     t_ref,
     t_type,
     t_string,
+    t_v2f,
+    t_v3f,
+    t_v2i,
+    t_v3i,
     t_MAX
 } pod_type_t;
 
@@ -59,7 +81,11 @@ static const char * type_names[] = {
     "bool",
     "ref",
     "type",
-    "string"
+    "string",
+    "v2f",
+    "v3f",
+    "v2i",
+    "v3i",
 };
 
 static const u16 type_sizes[] = {
@@ -77,7 +103,11 @@ static const u16 type_sizes[] = {
     sizeof(bool),
     sizeof(u64) * 2,
     sizeof(type_t),
-    sizeof(const char*)
+    sizeof(const char*),
+    sizeof(v2f),
+    sizeof(v3f),
+    sizeof(v2i),
+    sizeof(v3i)
 };
 
 #define idx_invalid 0xFFFFFFFF
@@ -101,10 +131,6 @@ bool vec_get(void **vec_data, unsigned int idx, void *data);
 bool vec_set(void **vec_data, unsigned int idx, const void *data);
 void *vec_at(void **vec_data, unsigned int idx);
 
-
-#define member_size(type, member) sizeof(((type *)0)->member)
-#define component_type(cpt_type) ((u64)&cpt_type)
-#define fields_end { 0, 0, 0, 0, 0 }
 
 typedef void(*listener_t)(const void *, const void *);
 typedef int(*error_proc)(const char *format, ...);
@@ -145,11 +171,11 @@ void component_register(
     const field_t *fields,
     u32 size);
 
-ref_t component_new(component_t *cpt);
+ref_t comp_new(component_t *cpt);
 
-void component_free(ref_t ref);
+void comp_free(ref_t ref);
 bool component_get(ref_t ref, void *data);
-bool component_set(ref_t ref, const void *data);
+bool comp_update(ref_t ref, const void *data);
 
 void register_listener(component_t *cpt, listener_t func);
 
@@ -159,5 +185,22 @@ extern component_t component_cpt;
 extern component_t field_cpt;
 
 void use_component();
+
+#define member_size(type, member) sizeof(((type *)0)->member)
+#define component_type(cpt_type) ((u64)&cpt_type)
+
+#define component(C, S) extern component_t C ## _cpt; typedef struct S C;
+
+#define def_comp(C) \
+    component_t C ## _cpt;\
+    const field_t C ## _fields[] = {
+
+#define def_field(C, T, N) { #N , t_ ## T, (u16)offsetof(C, N), (u16)member_size(C, N), false },
+#define def_child(C, CC, N) { #N, component_type(CC ## _cpt), (u16)offsetof(C, N), (u16)member_size(C, N), false },
+#define def_children(C, CC, N) { #N, component_type(CC ## _cpt), (u16)offsetof(C, N), (u16)member_size(C, N), true },
+#define def_array(C, T, N) { #N, t_ ## T, (u16)offsetof(C, N), (u16)member_size(C, N), true },
+#define def_end { 0, 0, 0, 0, 0 } };
+
+#define reg_comp(C) component_register(&C ## _cpt, #C, C ## _fields, sizeof(C))
 
 #endif //PLAZA_COMPONENT_H

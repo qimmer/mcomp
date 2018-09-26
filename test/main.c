@@ -37,14 +37,14 @@ int main() {
     register_listener(&entity_cpt, (void*)entity_changed);
     register_listener(&named_cpt, (void*)naming_changed);
 
-    ref_t ref = component_new(&entity_cpt);
+    ref_t ref = comp_new(&entity_cpt);
 
     entity_t entity, entity2;
     component_get(ref, &entity);
 
     strcpy(entity.naming.name, "Hello");
 
-    component_set(ref, &entity);
+    comp_update(ref, &entity);
 
     component_get(ref, &entity2);
 
